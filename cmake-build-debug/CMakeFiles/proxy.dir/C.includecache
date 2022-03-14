@@ -1,0 +1,34 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/httpechosrv.c
+stdio.h
+-
+stdlib.h
+-
+string.h
+-
+strings.h
+-
+unistd.h
+-
+sys/socket.h
+-
+netdb.h
+-
+netinet/in.h
+-
+arpa/inet.h
+-
+pthread.h
+-
+errno.h
+-
+signal.h
+-
+

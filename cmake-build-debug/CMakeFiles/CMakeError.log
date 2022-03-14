@@ -1,0 +1,49 @@
+Detecting C [-std=c11] compiler features failed to compile with the following output:
+Change Dir: /mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/cmake-build-debug/CMakeFiles/CMakeTmp
+
+Run Build Command:"/usr/bin/make" "cmTC_b75b3/fast"
+/usr/bin/make -f CMakeFiles/cmTC_b75b3.dir/build.make CMakeFiles/cmTC_b75b3.dir/build
+make[1]: Entering directory '/mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/cmake-build-debug/CMakeFiles/CMakeTmp'
+make[1]: CMakeFiles/cmTC_b75b3.dir/build.make: No such file or directory
+make[1]: *** No rule to make target 'CMakeFiles/cmTC_b75b3.dir/build.make'.  Stop.
+make[1]: Leaving directory '/mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/cmake-build-debug/CMakeFiles/CMakeTmp'
+Makefile:126: recipe for target 'cmTC_b75b3/fast' failed
+make: *** [cmTC_b75b3/fast] Error 2
+
+
+
+Determining if the pthread_create exist failed with the following output:
+Change Dir: /mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/cmake-build-debug/CMakeFiles/CMakeTmp
+
+Run Build Command:"/usr/bin/make" "cmTC_1bcba/fast"
+/usr/bin/make -f CMakeFiles/cmTC_1bcba.dir/build.make CMakeFiles/cmTC_1bcba.dir/build
+make[1]: Entering directory '/mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/cmake-build-debug/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_1bcba.dir/CheckSymbolExists.c.o
+/usr/bin/cc   -std=gnu11 -o CMakeFiles/cmTC_1bcba.dir/CheckSymbolExists.c.o   -c "/mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/cmake-build-debug/CMakeFiles/CMakeTmp/CheckSymbolExists.c"
+Linking C executable cmTC_1bcba
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_1bcba.dir/link.txt --verbose=1
+/usr/bin/cc      CMakeFiles/cmTC_1bcba.dir/CheckSymbolExists.c.o  -o cmTC_1bcba 
+CMakeFiles/cmTC_1bcba.dir/CheckSymbolExists.c.o: In function `main':
+CheckSymbolExists.c:(.text+0x1b): undefined reference to `pthread_create'
+collect2: error: ld returned 1 exit status
+CMakeFiles/cmTC_1bcba.dir/build.make:97: recipe for target 'cmTC_1bcba' failed
+make[1]: *** [cmTC_1bcba] Error 1
+make[1]: Leaving directory '/mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/cmake-build-debug/CMakeFiles/CMakeTmp'
+Makefile:126: recipe for target 'cmTC_1bcba/fast' failed
+make: *** [cmTC_1bcba/fast] Error 2
+
+File /mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/cmake-build-debug/CMakeFiles/CMakeTmp/CheckSymbolExists.c:
+/* */
+#include <pthread.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef pthread_create
+  return ((int*)(&pthread_create))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+
