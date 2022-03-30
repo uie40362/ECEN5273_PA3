@@ -104,6 +104,8 @@ void service_http_request(int connfd){
         /*Parse request method*/
         char buf_cpy[MAXLINE];
         strcpy(buf_cpy, buf);
+        char * http_body;
+        http_body = strchr(buf_cpy, '\r\n');
         request_method = strtok(buf_cpy, " ");
 
         /*GET method*/
@@ -111,84 +113,131 @@ void service_http_request(int connfd){
 
             /*parse filepath*/
             request_uri = strtok(NULL, " ");
-            if (strcmp(request_uri, "/")==0)
-                request_uri = "index.html";
-            else
-                request_uri += 1;
+            for (int i = 0; i < 3; i++){
+                request_uri = strchr(request_uri, '/');
+            }
+
 
             /*parse http version*/
             request_ver = strtok(NULL, "\r\n");
 //            request_ver[strcspn(request_ver, "\r\n")] = 0;    //remove trailing newline
-            //determine if file is in system
-            if (access(request_uri, F_OK) == 0) {
-                //file present
-                //determine file type
-                const char * filetype = get_filename_ext(request_uri);
-                char *content_type;
-                if(strcmp(filetype, "html") == 0)
-                    content_type = "text/html";
-                else if (strcmp(filetype, "txt")==0)
-                    content_type = "text/plain";
-                else if (strcmp(filetype, "png")==0)
-                    content_type = "image/png";
-                else if (strcmp(filetype, "gif")==0)
-                    content_type = "image/gif";
-                else if (strcmp(filetype, "jpg")==0)
-                    content_type = "image/jpg";
-                else if (strcmp(filetype, "css")==0)
-                    content_type = "text/css";
-                else if (strcmp(filetype, "js")==0)
-                    content_type = "application/javascript";
 
-                printf("request method: %s\n", request_method);
-                printf("request uri: %s\n", request_uri);
-                printf("request ver: %s\n", request_ver);
-                printf("content type: %s\n", content_type);
-                /*parse host*/
-                host_identifier = strtok(NULL, ": "); //get rid of "Host: " indicator
-                hostname = strtok(NULL, "\r\n");
-                hostname += 1; //remove extra space at start
+            printf("request method: %s\n", request_method);
+            printf("request uri: %s\n", request_uri);
+            printf("request ver: %s\n", request_ver);
+
+            char http_new_firstline[100];
+            sprintf(http_new_firstline, "%s %s %s\r\n", request_method, request_uri, request_ver);
+            strcat(http_new_firstline, http_body);
+
+            /*parse host*/
+            host_identifier = strtok(NULL, ": "); //get rid of "Host: " indicator
+            hostname = strtok(NULL, "\r\n");
+            hostname += 1; //remove extra space at start
+            char * hostport = strchr(hostname, ':');
+
+            //if client tries to connect via IP and port
+            if (hostport){
+                char hostport_copy[50];
+                strcpy(hostport_copy, hostport);
+                *hostport = '/0';
                 printf("host name: %s\n", hostname);
+                printf("port no: %s\n", hostport_copy);
+                int ip_valid;
+                struct in_addr ipaddr;
+                struct hostent * server;
+                struct sockaddr_in serveraddr;
 
-                /*parse connection*/
-                ka_identifier = strtok(NULL, ": "); //get rid of "Connection: " indicator
-                keep_alive = strtok(NULL, "\r\n");
-                keep_alive += 1; //remove extra space at start
-
-                /*create and send header*/
-                char header[MAXLINE];
-                FILE * fp = fopen(request_uri, "r");
-                fseek(fp, 0, SEEK_END);
-                int size = ftell(fp);   //get size of file
-                fseek(fp, 0, SEEK_SET);
-                sprintf(header, "%s Document Follows\r\nContent-Type:%s\r\nContent-Length:%d\r\n\r\n", request_ver, content_type, size);
-                strcpy(buf, header);
-                printf("server returning a http message with the following header.\n%s\n", buf);
-                write(connfd, buf, strlen(header));
-
-                /*read file to buf*/
-                while (size) {
-                    bzero(buf, MAXLINE);
-                    int bytes_read = fread(buf, sizeof(char), MAXLINE, fp);
-
-                    /*send buffer to server*/
-                    write(connfd, buf, bytes_read);
-
-                    size -= bytes_read;
+                /* socket: create the socket */
+                int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+                if (sockfd < 0) {
+                    printf("ERROR opening socket");
+                    exit(0);
                 }
-                printf("Finished sending file\n");
-                fclose(fp);
+
+                ip_valid = inet_aton(hostname, &ipaddr);
+                if (!ip_valid){
+                    printf("IP not valid");
+                    //handle for bad IPs
+                    char httperr[50];
+                    sprintf(httperr, "%s 400 Bad Request", request_ver);
+                    bzero(buf, MAXBUF);
+                    strcpy(buf, httperr);
+                    write(connfd, buf, strlen(httperr));
+                    continue;
+                }
+                /* gethostbyaddr: get the server based on IP Address*/
+                server = gethostbyaddr((const void *)&ipaddr, sizeof(ipaddr), AF_INET);
+                if (server == NULL) {
+                    fprintf(stderr,"ERROR, no such host as %s\n", hostname);
+                    //handle for bad IPs
+                    char httperr[50];
+                    sprintf(httperr, "%s 400 Bad Request", request_ver);
+                    bzero(buf, MAXBUF);
+                    strcpy(buf, httperr);
+                    write(connfd, buf, strlen(httperr));
+                    continue;
+                }
+                int portno = atoi(hostport_copy);
+
+                /* build the server's Internet address */
+                bzero((char *) &serveraddr, sizeof(serveraddr));
+                serveraddr.sin_family = AF_INET;
+                bcopy((char *)server->h_addr,
+                      (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+                serveraddr.sin_port = htons(portno);
+
+                //connect to host server
+                int connected = connect(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
             }
-            else {
-                // file doesn't exist
-                printf("file path: %s\n", request_uri);
-                char httperr[50];
-                sprintf(httperr, "%s 500 Internal Server Error", request_ver);
-                bzero(buf, MAXBUF);
-                strcpy(buf, httperr);
-                write(connfd, buf, strlen(httperr));
-                continue;
+
+            //if client tries to connect via name
+            else{
+                printf("host name: %s\n", hostname);
+                int ip_valid;
+                struct in_addr ipaddr;
+                struct hostent * server;
+                struct sockaddr_in serveraddr;
+
+                /* socket: create the socket */
+                int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+                if (sockfd < 0) {
+                    printf("ERROR opening socket");
+                    exit(0);
+                }
+
+                int portno = 80;
+
+                /*gethostbyname*/
+                server = gethostbyname(hostname);
+                if (server == NULL) {
+                    fprintf(stderr,"ERROR, no such host as %s\n", hostname);
+                    //handle for bad IPs
+                    char httperr[50];
+                    sprintf(httperr, "%s 400 Bad Request", request_ver);
+                    bzero(buf, MAXBUF);
+                    strcpy(buf, httperr);
+                    write(connfd, buf, strlen(httperr));
+                    continue;
+                }
+
+                /* build the server's Internet address */
+                bzero((char *) &serveraddr, sizeof(serveraddr));
+                serveraddr.sin_family = AF_INET;
+                bcopy((char *)server->h_addr,
+                      (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+                serveraddr.sin_port = htons(portno);
+
+                //connect to host server
+                int connected = connect(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
+
             }
+
+            /*parse connection*/
+            ka_identifier = strtok(NULL, ": "); //get rid of "Connection: " indicator
+            keep_alive = strtok(NULL, "\r\n");
+            keep_alive += 1; //remove extra space at start
+
 
 
             if (strcmp(keep_alive, "keep-alive")==0) {
@@ -199,6 +248,16 @@ void service_http_request(int connfd){
                 printf("No activity from client. Closing Connection\n");
                 break;
             }
+        }
+
+        else{
+            //handle for methods other than GET
+            char httperr[50];
+            sprintf(httperr, "%s 400 Bad Request", request_ver);
+            bzero(buf, MAXBUF);
+            strcpy(buf, httperr);
+            write(connfd, buf, strlen(httperr));
+            continue;
         }
 
 //        strcpy(buf, httpmsg);
