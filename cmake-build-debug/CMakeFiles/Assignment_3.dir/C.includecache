@@ -7,20 +7,10 @@
 #IncludeRegexTransform: 
 
 /mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/main.c
-stdio.h
--
 stdlib.h
 -
+stdio.h
+-
 string.h
--
-unistd.h
--
-sys/types.h
--
-sys/socket.h
--
-netinet/in.h
--
-netdb.h
--
+/mnt/c/Users/goshe/Personal/NUS Matters/Y3S2/ECEN5273/Assignment/Assignment 3/string.h
 

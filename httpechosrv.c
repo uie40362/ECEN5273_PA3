@@ -18,6 +18,18 @@
 #define MAXLINE  8192  /* max text line length */
 #define MAXBUF   8192  /* max I/O buffer size */
 #define LISTENQ  1024  /* second argument to listen() */
+#define MAX_CACHE_SIZE 2098000
+#define MAX_OBJ_SIZE 204800
+
+/*globals*/
+static volatile int keep_running = 1;
+
+/*structs*/
+struct uri_info{
+    char host[100];
+    char path[300];
+    int port;
+};
 
 /*function prototypes*/
 int open_listenfd(int port);
@@ -25,9 +37,10 @@ void service_http_request(int connfd);
 void *thread(void *vargp);
 const char * get_filename_ext(const char *filename);
 void intHandler(int dummy);
-
-/*globals*/
-static volatile int keep_running = 1;
+int connect_via_ip(char * ip, int port);
+int connect_via_name(char * hostname, int port);
+void parse_uri(char * uri, struct uri_info * server_info);
+void parse_hdr_info(char * hdr_line, char * data, int * host_provided);
 
 int main(int argc, char **argv) 
 {
@@ -69,6 +82,7 @@ void * thread(void * vargp)
 /*
  * service_http_request - service a http request and send a response accordingly
  */
+
 void service_http_request(int connfd){
     size_t n;
     char * request_method;
@@ -78,192 +92,94 @@ void service_http_request(int connfd){
     char * host_identifier;
     char * ka_identifier;
     char * keep_alive;
-    char buf[MAXLINE];
-    char * httpmsg="HTTP/1.1 200 Document Follows\r\nContent-Type:text/html\r\nContent-Length:32\r\n\r\n<html><h1>Hello CSCI4273 Course!</h1>";
+    char buf[MAXBUF];
+    struct uri_info serv_info;
+    char new_request[MAXBUF];
 
 
-    while(keep_running) {
-        /*setup select function*/
-        fd_set select_fds;
-        struct timeval timeout;
+    n = read(connfd, buf, MAXLINE);
 
-        FD_ZERO(&select_fds);
-        FD_SET(connfd, &select_fds);
-        timeout.tv_sec = 10;
-        timeout.tv_usec = 0;
-        //close connection after 10s timeout
-        if (select(32, &select_fds, 0, 0, &timeout) == 0) {
-            printf("No activity from client. Closing Connection\n");
+    printf("server received the following request:\n%s\n", buf);
+    /*Parse first line info*/
+    char * first_line;
+    first_line = strtok(buf, "\r\n");
+    sscanf(first_line, "%s %s %s", request_method, request_uri, request_ver);
+    if (strcasecmp(request_method, "GET")!=0){
+        //handle for methods other than GET
+        char httperr[50];
+        sprintf(httperr, "%s 400 Bad Request", request_ver);
+        bzero(buf, MAXBUF);
+        strcpy(buf, httperr);
+        write(connfd, buf, strlen(httperr));
+        return;
+    }
+
+    parse_uri(request_uri, &serv_info);
+
+    /*Parse additional hdr info*/
+    char * hdr_ln;
+    char hdr_data[MAXLINE];
+    int host_info_provided = 0;
+    hdr_ln = strtok(NULL, "\r\n");
+    while (strcmp(hdr_ln, "\r\n") != 0){
+        if (hdr_ln == NULL)
             break;
-        }
+        parse_hdr_info(hdr_ln, hdr_data, &host_info_provided);
+        hdr_ln = strtok(NULL, "\r\n");
+    }
 
-        n = read(connfd, buf, MAXLINE);
-        if (!n)
-            continue;
-        printf("server received the following request:\n%s\n", buf);
-        /*Parse request method*/
-        char buf_cpy[MAXLINE];
-        strcpy(buf_cpy, buf);
-        char * http_body;
-        http_body = strchr(buf_cpy, '\r\n');
-        request_method = strtok(buf_cpy, " ");
+    //Generate a new modified HTTP request to forward to the server
+    sprintf(new_request, "GET %s %s\r\n", serv_info.path, request_ver);
 
-        /*GET method*/
-        if (strcmp(request_method, "GET") == 0) {
+    //append host info if available
+    if (host_info_provided){
+        strcat(new_request, hdr_data);
+        strcat(new_request, "\r\n");
+    }
 
-            /*parse filepath*/
-            request_uri = strtok(NULL, " ");
-            for (int i = 0; i < 3; i++){
-                request_uri = strchr(request_uri, '/');
-            }
+    else{
+        sprintf(new_request, "%sHost: %s\r\n", new_request, serv_info.host);
+    }
 
+    /*GET method*/
+    if (strcmp(request_method, "GET") == 0) {
 
-            /*parse http version*/
-            request_ver = strtok(NULL, "\r\n");
-//            request_ver[strcspn(request_ver, "\r\n")] = 0;    //remove trailing newline
+        printf("request method: %s\n", request_method);
+        printf("request uri: %s\n", request_uri);
+        printf("request ver: %s\n", request_ver);
 
-            printf("request method: %s\n", request_method);
-            printf("request uri: %s\n", request_uri);
-            printf("request ver: %s\n", request_ver);
+        char http_new_firstline[100];
+        sprintf(http_new_firstline, "%s %s %s\r\n", request_method, request_uri, request_ver);
+        strcat(http_new_firstline, http_body);
 
-            char http_new_firstline[100];
-            sprintf(http_new_firstline, "%s %s %s\r\n", request_method, request_uri, request_ver);
-            strcat(http_new_firstline, http_body);
+        /*parse host*/
+        host_identifier = strtok(NULL, ": "); //get rid of "Host: " indicator
+        hostname = strtok(NULL, "\r\n");
+        hostname += 1; //remove extra space at start
+        char * hostport = strchr(hostname, ':');
 
-            /*parse host*/
-            host_identifier = strtok(NULL, ": "); //get rid of "Host: " indicator
-            hostname = strtok(NULL, "\r\n");
-            hostname += 1; //remove extra space at start
-            char * hostport = strchr(hostname, ':');
+        int sockfd;
+        //client tries to connect via name
+        sockfd = connect_via_name();
 
-            //if client tries to connect via IP and port
-            if (hostport){
-                char hostport_copy[50];
-                strcpy(hostport_copy, hostport);
-                *hostport = '/0';
-                printf("host name: %s\n", hostname);
-                printf("port no: %s\n", hostport_copy);
-                int ip_valid;
-                struct in_addr ipaddr;
-                struct hostent * server;
-                struct sockaddr_in serveraddr;
+        /*forward http req to end server*/
+        strcpy(buf, http_new_firstline);
+        write(sockfd, buf, sizeof(buf));
 
-                /* socket: create the socket */
-                int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-                if (sockfd < 0) {
-                    printf("ERROR opening socket");
-                    exit(0);
-                }
+        /*parse connection*/
+        ka_identifier = strtok(NULL, ": "); //get rid of "Connection: " indicator
+        keep_alive = strtok(NULL, "\r\n");
+        keep_alive += 1; //remove extra space at start
 
-                ip_valid = inet_aton(hostname, &ipaddr);
-                if (!ip_valid){
-                    printf("IP not valid");
-                    //handle for bad IPs
-                    char httperr[50];
-                    sprintf(httperr, "%s 400 Bad Request", request_ver);
-                    bzero(buf, MAXBUF);
-                    strcpy(buf, httperr);
-                    write(connfd, buf, strlen(httperr));
-                    continue;
-                }
-                /* gethostbyaddr: get the server based on IP Address*/
-                server = gethostbyaddr((const void *)&ipaddr, sizeof(ipaddr), AF_INET);
-                if (server == NULL) {
-                    fprintf(stderr,"ERROR, no such host as %s\n", hostname);
-                    //handle for bad IPs
-                    char httperr[50];
-                    sprintf(httperr, "%s 400 Bad Request", request_ver);
-                    bzero(buf, MAXBUF);
-                    strcpy(buf, httperr);
-                    write(connfd, buf, strlen(httperr));
-                    continue;
-                }
-                int portno = atoi(hostport_copy);
+    }
 
-                /* build the server's Internet address */
-                bzero((char *) &serveraddr, sizeof(serveraddr));
-                serveraddr.sin_family = AF_INET;
-                bcopy((char *)server->h_addr,
-                      (char *)&serveraddr.sin_addr.s_addr, server->h_length);
-                serveraddr.sin_port = htons(portno);
-
-                //connect to host server
-                int connected = connect(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
-            }
-
-            //if client tries to connect via name
-            else{
-                printf("host name: %s\n", hostname);
-                int ip_valid;
-                struct in_addr ipaddr;
-                struct hostent * server;
-                struct sockaddr_in serveraddr;
-
-                /* socket: create the socket */
-                int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-                if (sockfd < 0) {
-                    printf("ERROR opening socket");
-                    exit(0);
-                }
-
-                int portno = 80;
-
-                /*gethostbyname*/
-                server = gethostbyname(hostname);
-                if (server == NULL) {
-                    fprintf(stderr,"ERROR, no such host as %s\n", hostname);
-                    //handle for bad IPs
-                    char httperr[50];
-                    sprintf(httperr, "%s 400 Bad Request", request_ver);
-                    bzero(buf, MAXBUF);
-                    strcpy(buf, httperr);
-                    write(connfd, buf, strlen(httperr));
-                    continue;
-                }
-
-                /* build the server's Internet address */
-                bzero((char *) &serveraddr, sizeof(serveraddr));
-                serveraddr.sin_family = AF_INET;
-                bcopy((char *)server->h_addr,
-                      (char *)&serveraddr.sin_addr.s_addr, server->h_length);
-                serveraddr.sin_port = htons(portno);
-
-                //connect to host server
-                int connected = connect(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
-
-            }
-
-            /*parse connection*/
-            ka_identifier = strtok(NULL, ": "); //get rid of "Connection: " indicator
-            keep_alive = strtok(NULL, "\r\n");
-            keep_alive += 1; //remove extra space at start
-
-
-
-            if (strcmp(keep_alive, "keep-alive")==0) {
-                printf("connection: %s\n", keep_alive);
-                continue;
-            }
-            else{
-                printf("No activity from client. Closing Connection\n");
-                break;
-            }
-        }
-
-        else{
-            //handle for methods other than GET
-            char httperr[50];
-            sprintf(httperr, "%s 400 Bad Request", request_ver);
-            bzero(buf, MAXBUF);
-            strcpy(buf, httperr);
-            write(connfd, buf, strlen(httperr));
-            continue;
-        }
-
-//        strcpy(buf, httpmsg);
-//        printf("server returning a http message with the following content.\n%s\n", buf);
-//        write(connfd, buf, strlen(httpmsg));
-        break;
+    else{
+        //handle for methods other than GET
+        char httperr[50];
+        sprintf(httperr, "%s 400 Bad Request", request_ver);
+        bzero(buf, MAXBUF);
+        strcpy(buf, httperr);
+        write(connfd, buf, strlen(httperr));
     }
     /*shutdown server gracefully*/
     close(connfd);
@@ -314,4 +230,140 @@ void intHandler(int dummy) {
     keep_running = 0;
     printf("\nWEB SERVER SHUTDOWN\n");
     exit(0);
+}
+
+/*connect to server via IP*/
+int connect_via_ip(char * ip, int port){
+    if (!port)
+        port = 80;
+
+    int ip_valid;
+    struct in_addr ipaddr;
+    struct hostent * server;
+    struct sockaddr_in serveraddr;
+
+    /* socket: create the socket */
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        printf("ERROR opening socket");
+        return -1;
+    }
+
+    ip_valid = inet_aton(ip, &ipaddr);
+    if (!ip_valid){
+        printf("IP not valid");
+        //handle for bad IPs
+        return -1;
+    }
+
+    /* gethostbyaddr: get the server based on IP Address*/
+    server = gethostbyaddr((const void *)&ipaddr, sizeof(ipaddr), AF_INET);
+    if (server == NULL) {
+        fprintf(stderr,"ERROR, no such host as %s\n", ip);
+        //handle for bad IPs
+        return -1;
+    }
+
+    /* build the server's Internet address */
+    bzero((char *) &serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;
+    bcopy((char *)server->h_addr,
+          (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+    serveraddr.sin_port = htons(port);
+
+    //connect to host server
+    int connected = connect(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
+    if (connected<0)
+        return -1;
+    else
+        return sockfd;
+}
+
+/*connect to server via name*/
+int connect_via_name(char * hostname, int port){
+    if (!port)
+        port = 80;
+
+    struct hostent * server;
+    struct sockaddr_in serveraddr;
+
+    /* socket: create the socket */
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        printf("ERROR opening socket");
+        exit(0);
+    }
+
+    /*gethostbyname*/
+    server = gethostbyname(hostname);
+    if (server == NULL) {
+        fprintf(stderr,"ERROR, no such host as %s\n", hostname);
+        //handle for bad IPs
+        return -1;
+    }
+
+    /* build the server's Internet address */
+    bzero((char *) &serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;
+    bcopy((char *)server->h_addr,
+          (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+    serveraddr.sin_port = htons(port);
+
+    //connect to host server
+    int connected = connect(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
+    if (connected<0)
+        return -1;
+    else
+        return sockfd;
+}
+
+void parse_uri(char * uri, struct uri_info * server_info){
+    char temp[MAXLINE];
+
+    //Extract the path to the resource
+    if(strstr(uri,"http://") != NULL)
+        sscanf( uri, "http://%[^/]%s", temp, server_info->path);
+    else
+        sscanf( uri, "%[^/]%s", temp, server_info->path);
+
+    //Extract the port number and the hostname
+    if( strstr(temp, ":") != NULL)
+        sscanf(temp,"%[^:]:%d", server_info->host, &server_info->port);
+    else {
+        strcpy(server_info->host,temp);
+        server_info->port = 0;
+    }
+
+    // incase the path to resource is empty
+    if(!server_info->path[0])
+        strcpy(server_info->path,"/");
+}
+
+/*parse addition request hdr info from clinet after first line*/
+void parse_hdr_info(char * hdr_line, char * data, int * host_provided){
+    if(!strcmp(hdr_line, "\r\n"))
+        return;
+
+    if(strstr(hdr_line, "User-Agent:"))
+        return;
+
+    if(strstr(hdr_line, "Accept:"))
+        return;
+
+    if(strstr(hdr_line, "Accept-Encoding:"))
+        return;
+
+    if(strstr(hdr_line, "Connection:"))
+        return;
+
+    if(strstr(hdr_line, "Proxy-Connection:"))
+        return;
+
+    if(strstr(hdr_line, "Host:")) {
+        sprintf(data, "%s%s\r\n", data, hdr_line);
+        * host_provided = 1;
+        return;
+    }
+
+    sprintf(data, "%s%s\r\n", data, hdr_line);
 }
