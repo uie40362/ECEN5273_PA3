@@ -23,11 +23,7 @@
 
 /*globals*/
 static volatile int keep_running = 1;
-static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
-static const char *accept_hdr = "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n";
-static const char *accept_encoding_hdr = "Accept-Encoding: gzip, deflate\r\n";
-static const char *connection_hdr = "Connection: close\r\n";
-static const char *proxy_conn_hdr = "Proxy-Connection: close\r\n";
+
 
 /*structs*/
 struct uri_info{
@@ -88,7 +84,6 @@ void * thread(void * vargp)
  */
 
 void service_http_request(int connfd){
-    size_t n;
     char request_method[5];
     char request_uri[120];
     char request_ver[10];
@@ -96,9 +91,10 @@ void service_http_request(int connfd){
     struct uri_info serv_info;
     char new_request[MAXBUF];
     char response[1<<15];
+    ssize_t n;
 
 
-    read(connfd, buf, MAXLINE);
+    recv(connfd, buf, MAXLINE,0);
 
     /*Parse first line info*/
     char * first_line;
@@ -141,11 +137,6 @@ void service_http_request(int connfd){
     }
 
     strcat(new_request, hdr_data);
-    strcat(new_request, user_agent_hdr);
-    strcat(new_request, accept_hdr);
-    strcat(new_request, accept_encoding_hdr);
-    strcat(new_request, connection_hdr);
-    strcat(new_request, proxy_conn_hdr);
     strcat(new_request, "\r\n");
 
     /*Connect to host server*/
@@ -161,22 +152,29 @@ void service_http_request(int connfd){
     }
 
     //send the modified http request to server
-    n = write(serv_sockfd, new_request, sizeof(new_request));
-    bzero(response, sizeof(response));
+    send(serv_sockfd, new_request, sizeof(new_request), 0);
 
     //receive the reply
-    n = read(serv_sockfd, response, sizeof(response));
+    n = recv(serv_sockfd, response, sizeof(response), 0);
+    printf("sending the following response to client:\n");
+    while (n>0) {
+        printf("%s", response);
+        send(connfd, response, n, 0); //sending it to client web browser
+        bzero(response, sizeof(response));
+        n = recv(serv_sockfd, response, sizeof(response), 0);
+    }
 
-    printf("received the following respons from end server:\n%s", response);
-
-    //forward to client
-    n = write(connfd, response, sizeof(response));
-
+//    printf("received the following response from end server:\n%s", response);
     //close connection to server
     close(serv_sockfd);
 
+    //forward to client
+//    write(connfd, response, sizeof(response));
 
-    /*shutdown server gracefully*/
+
+
+
+    //close the connection to client
     close(connfd);
 }
 
