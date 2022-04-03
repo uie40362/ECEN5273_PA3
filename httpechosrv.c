@@ -14,6 +14,8 @@
 #include <pthread.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
+
 
 #define MAXLINE  8192  /* max text line length */
 #define MAXBUF   8192  /* max I/O buffer size */
@@ -21,16 +23,26 @@
 #define MAX_CACHE_SIZE 2098000
 #define MAX_OBJ_SIZE 104900
 
-/*globals*/
-static volatile int keep_running = 1;
-
-
 /*structs*/
 struct uri_info{
     char host[100];
     char path[300];
     int port;
 };
+
+struct ip_cache{
+    char hostname[100];
+    char ip[25];
+    struct ip_cache *next;
+};
+
+/*globals*/
+static volatile int keep_running = 1;
+pthread_rwlock_t cache_start_lock;
+//head ptr for ip cache
+struct ip_cache  *ipCache_start = NULL;
+
+
 
 /*function prototypes*/
 int open_listenfd(int port);
@@ -41,6 +53,7 @@ int connect_via_ip(char * ip, int port);
 int connect_via_name(char * hostname, int port);
 void parse_uri(char * uri, struct uri_info * server_info);
 void parse_hdr_info(char * hdr_line, char * data, int * host_provided);
+void addto_ipcache(char * hostname, char * ip);
 
 int main(int argc, char **argv) 
 {
@@ -144,7 +157,7 @@ void service_http_request(int connfd){
     if (serv_sockfd<0){
         //handle for unsuccessful connection to server
         char httperr[50];
-        sprintf(httperr, "HTTP/1.0 400 Bad Request");
+        sprintf(httperr, "HTTP/1.0 404 Not Found");
         bzero(buf, MAXBUF);
         strcpy(buf, httperr);
         write(connfd, buf, strlen(httperr));
@@ -219,6 +232,15 @@ void intHandler(int dummy) {
     exit(0);
 }
 
+/*IP caching function*/
+void addto_ipcache(char * hostname, char * ip){
+    struct ip_cache * pair;
+    strcpy(pair->hostname, hostname);
+    strcpy(pair->ip, ip);
+    pair->next = ipCache_start;
+    ipCache_start = pair;
+}
+
 /*connect to server via IP*/
 int connect_via_ip(char * ip, int port){
     if (!port)
@@ -288,6 +310,7 @@ int connect_via_name(char * hostname, int port){
         //handle for bad hostname
         return -1;
     }
+    addto_ipcache(hostname, server->h_addr);
 
     /* build the server's Internet address */
     bzero((char *) &serveraddr, sizeof(serveraddr));
@@ -310,8 +333,14 @@ void parse_uri(char * uri, struct uri_info * server_info){
     //Extract the path to the resource
     if(strstr(uri,"http://") != NULL)
         sscanf( uri, "http://%[^/]%s", temp, server_info->path);
+
+    else if(strstr(uri,"https://") != NULL)
+        sscanf( uri, "https://%[^/]%s", temp, server_info->path);
+
     else
         sscanf( uri, "%[^/]%s", temp, server_info->path);
+
+
 
     //Extract the port number and the hostname
     if( strstr(temp, ":") != NULL)
@@ -354,3 +383,4 @@ void parse_hdr_info(char * hdr_line, char * data, int * host_provided){
 
     sprintf(data, "%s%s\r\n", data, hdr_line);
 }
+

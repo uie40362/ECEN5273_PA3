@@ -2,13 +2,11 @@
 #include <stdio.h>
 #include "string.h"
 
+struct mystruct{
+    int myint;
+};
 int main(){
-    char mystring[] = "line1\r\nline2\r\n\r\n";
-    char * line;
-    line = strtok(mystring, "\r\n");
-    printf("%s\n", line);
-    while (line){
-        line = strtok(NULL, "\r\n");
-    }
+    struct mystruct * test = NULL;
+    printf("%d", test);
     return 0;
 };
