@@ -19,10 +19,15 @@
 #define MAXBUF   8192  /* max I/O buffer size */
 #define LISTENQ  1024  /* second argument to listen() */
 #define MAX_CACHE_SIZE 2098000
-#define MAX_OBJ_SIZE 204800
+#define MAX_OBJ_SIZE 104900
 
 /*globals*/
 static volatile int keep_running = 1;
+static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
+static const char *accept_hdr = "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n";
+static const char *accept_encoding_hdr = "Accept-Encoding: gzip, deflate\r\n";
+static const char *connection_hdr = "Connection: close\r\n";
+static const char *proxy_conn_hdr = "Proxy-Connection: close\r\n";
 
 /*structs*/
 struct uri_info{
@@ -35,7 +40,6 @@ struct uri_info{
 int open_listenfd(int port);
 void service_http_request(int connfd);
 void *thread(void *vargp);
-const char * get_filename_ext(const char *filename);
 void intHandler(int dummy);
 int connect_via_ip(char * ip, int port);
 int connect_via_name(char * hostname, int port);
@@ -85,29 +89,27 @@ void * thread(void * vargp)
 
 void service_http_request(int connfd){
     size_t n;
-    char * request_method;
-    char * request_uri;
-    char *request_ver;
-    char * hostname;
-    char * host_identifier;
-    char * ka_identifier;
-    char * keep_alive;
+    char request_method[5];
+    char request_uri[120];
+    char request_ver[10];
     char buf[MAXBUF];
     struct uri_info serv_info;
     char new_request[MAXBUF];
+    char response[1<<15];
 
 
-    n = read(connfd, buf, MAXLINE);
+    read(connfd, buf, MAXLINE);
 
-    printf("server received the following request:\n%s\n", buf);
     /*Parse first line info*/
     char * first_line;
     first_line = strtok(buf, "\r\n");
+    if (!first_line)
+        return;
     sscanf(first_line, "%s %s %s", request_method, request_uri, request_ver);
     if (strcasecmp(request_method, "GET")!=0){
         //handle for methods other than GET
         char httperr[50];
-        sprintf(httperr, "%s 400 Bad Request", request_ver);
+        sprintf(httperr, "HTTP/1.0 400 Bad Request");
         bzero(buf, MAXBUF);
         strcpy(buf, httperr);
         write(connfd, buf, strlen(httperr));
@@ -121,66 +123,59 @@ void service_http_request(int connfd){
     char hdr_data[MAXLINE];
     int host_info_provided = 0;
     hdr_ln = strtok(NULL, "\r\n");
-    while (strcmp(hdr_ln, "\r\n") != 0){
-        if (hdr_ln == NULL)
-            break;
-        parse_hdr_info(hdr_ln, hdr_data, &host_info_provided);
-        hdr_ln = strtok(NULL, "\r\n");
+    if (hdr_ln) {
+        while (strcmp(hdr_ln, "\r\n") != 0) {
+            parse_hdr_info(hdr_ln, hdr_data, &host_info_provided);
+            hdr_ln = strtok(NULL, "\r\n");
+            if (hdr_ln == NULL)
+                break;
+        }
     }
 
     //Generate a new modified HTTP request to forward to the server
-    sprintf(new_request, "GET %s %s\r\n", serv_info.path, request_ver);
+    sprintf(new_request, "GET %s HTTP/1.0\r\n", serv_info.path);
 
-    //append host info if available
-    if (host_info_provided){
-        strcat(new_request, hdr_data);
-        strcat(new_request, "\r\n");
-    }
-
-    else{
+    //if no host info provided add host info to request
+    if (!host_info_provided){
         sprintf(new_request, "%sHost: %s\r\n", new_request, serv_info.host);
     }
 
-    /*GET method*/
-    if (strcmp(request_method, "GET") == 0) {
+    strcat(new_request, hdr_data);
+    strcat(new_request, user_agent_hdr);
+    strcat(new_request, accept_hdr);
+    strcat(new_request, accept_encoding_hdr);
+    strcat(new_request, connection_hdr);
+    strcat(new_request, proxy_conn_hdr);
+    strcat(new_request, "\r\n");
 
-        printf("request method: %s\n", request_method);
-        printf("request uri: %s\n", request_uri);
-        printf("request ver: %s\n", request_ver);
-
-        char http_new_firstline[100];
-        sprintf(http_new_firstline, "%s %s %s\r\n", request_method, request_uri, request_ver);
-        strcat(http_new_firstline, http_body);
-
-        /*parse host*/
-        host_identifier = strtok(NULL, ": "); //get rid of "Host: " indicator
-        hostname = strtok(NULL, "\r\n");
-        hostname += 1; //remove extra space at start
-        char * hostport = strchr(hostname, ':');
-
-        int sockfd;
-        //client tries to connect via name
-        sockfd = connect_via_name();
-
-        /*forward http req to end server*/
-        strcpy(buf, http_new_firstline);
-        write(sockfd, buf, sizeof(buf));
-
-        /*parse connection*/
-        ka_identifier = strtok(NULL, ": "); //get rid of "Connection: " indicator
-        keep_alive = strtok(NULL, "\r\n");
-        keep_alive += 1; //remove extra space at start
-
-    }
-
-    else{
-        //handle for methods other than GET
+    /*Connect to host server*/
+    int serv_sockfd = connect_via_name(serv_info.host, serv_info.port);
+    if (serv_sockfd<0){
+        //handle for unsuccessful connection to server
         char httperr[50];
-        sprintf(httperr, "%s 400 Bad Request", request_ver);
+        sprintf(httperr, "HTTP/1.0 400 Bad Request");
         bzero(buf, MAXBUF);
         strcpy(buf, httperr);
         write(connfd, buf, strlen(httperr));
+        return;
     }
+
+    //send the modified http request to server
+    n = write(serv_sockfd, new_request, sizeof(new_request));
+    bzero(response, sizeof(response));
+
+    //receive the reply
+    n = read(serv_sockfd, response, sizeof(response));
+
+    printf("received the following respons from end server:\n%s", response);
+
+    //forward to client
+    n = write(connfd, response, sizeof(response));
+
+    //close connection to server
+    close(serv_sockfd);
+
+
     /*shutdown server gracefully*/
     close(connfd);
 }
@@ -218,12 +213,6 @@ int open_listenfd(int port)
     return listenfd;
 } /* end open_listenfd */
 
-/*function to determine file extension*/
-const char * get_filename_ext(const char *filename) {
-    const char *dot = strrchr(filename, '.');
-    if(!dot || dot == filename) return "";
-    return dot + 1;
-}
 
 /*signal handler (ctrl+c)*/
 void intHandler(int dummy) {
@@ -298,7 +287,7 @@ int connect_via_name(char * hostname, int port){
     server = gethostbyname(hostname);
     if (server == NULL) {
         fprintf(stderr,"ERROR, no such host as %s\n", hostname);
-        //handle for bad IPs
+        //handle for bad hostname
         return -1;
     }
 
