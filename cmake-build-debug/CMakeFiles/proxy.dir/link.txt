@@ -1,1 +1,1 @@
-/usr/bin/cc  -pthread -g   CMakeFiles/proxy.dir/httpechosrv.c.o  -o proxy 
+/usr/bin/cc  -pthread -g   CMakeFiles/proxy.dir/httpechosrv.c.o  -o proxy -lssl -lcrypto 

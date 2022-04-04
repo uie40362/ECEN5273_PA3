@@ -6,5 +6,5 @@ C_FLAGS =  -pthread -g   -std=gnu11
 
 C_DEFINES = 
 
-C_INCLUDES = 
+C_INCLUDES = -I/usr/include/openssl 
 
