@@ -51,6 +51,7 @@ struct web_cache{
 static volatile int keep_running = 1;
 pthread_rwlock_t ipcache_start_rwlock;
 pthread_rwlock_t webcache_start_rwlock;
+pthread_rwlock_t blacklist_rwlock;
 int timeout = 0;
 
 //head ptr for ip cache and web cache
@@ -71,6 +72,7 @@ void addto_ipcache(char * hostname, char * ip);
 struct ip_cache * get_ipcache(char * hostname);
 void addto_webcache(char * uri, clock_t tickstart);
 struct web_cache * get_webcache(char * uri);
+int check_blacklisted(char * hostname);
 
 int main(int argc, char **argv) 
 {
@@ -80,6 +82,7 @@ int main(int argc, char **argv)
     pthread_t tid;
     pthread_rwlock_init(&(webcache_start_rwlock), NULL);
     pthread_rwlock_init(&(ipcache_start_rwlock), NULL);
+    pthread_rwlock_init(&(blacklist_rwlock), NULL);
 
     if (argc != 3) {
         fprintf(stderr, "usage: %s <port> <timeout>\n", argv[0]);
@@ -172,6 +175,18 @@ void service_http_request(int connfd){
     strcat(new_request, hdr_data);
     strcat(new_request, "\r\n");
 
+    //check if blacklisted
+    int blacklist = check_blacklisted(serv_info.host);
+    if (blacklist){
+        //send forbidden error to client
+        char httperr[50];
+        sprintf(httperr, "HTTP/1.0 403 Forbidden");
+        bzero(buf, MAXBUF);
+        strcpy(buf, httperr);
+        write(connfd, buf, strlen(httperr));
+        return;
+    }
+
     /*Connect to host server*/
     int serv_sockfd;
     struct ip_cache * ptr = get_ipcache(serv_info.host);
@@ -200,6 +215,9 @@ void service_http_request(int connfd){
     for(int i = 0; i < 16; ++i)
         sprintf(&md5string[i*2], "%02x", (unsigned int)out[i]);
 
+    char filename[] = "Cache/";
+    strcat(filename, md5string);
+
     struct web_cache * webptr = get_webcache(request_uri);
 
     if( webptr ) { //webpage in cache
@@ -207,7 +225,7 @@ void service_http_request(int connfd){
 
         //send cached webpage
         /*open file and determine its size*/
-        FILE * fp = fopen(md5string, "r");
+        FILE * fp = fopen(filename, "r");
         fseek(fp, 0, SEEK_END);
         int size = ftell(fp);   //get size of file
         fseek(fp, 0, SEEK_SET);
@@ -232,7 +250,7 @@ void service_http_request(int connfd){
         printf("sending the following response to client:\n");
 
         //cache the webpage
-        FILE * fp = fopen(md5string, "w");
+        FILE * fp = fopen(filename, "w");
 //        printf("Value of errno: %d\n ", errno);
 
         while (n > 0) {
@@ -479,5 +497,42 @@ struct web_cache * get_webcache(char * uri){
         ptr = ptr->next;
     }
     return NULL;
+}
+
+void parse_blacklisted_host(char * blacklist_uri, char * answer){
+    char temp[100];
+
+    //Extract the path to the resource
+    if(strstr(blacklist_uri,"www.") != NULL)
+        sscanf( blacklist_uri, "www.%s", temp);
+
+    else if(strstr(blacklist_uri,"http://") != NULL)
+        sscanf( blacklist_uri, "http://%s", temp);
+
+    else
+        sscanf( blacklist_uri, "%s", temp);
+
+    strcpy(answer, temp);
+}
+
+int check_blacklisted(char * hostname){
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t n;
+    char blacklist_host[100];
+    pthread_rwlock_rdlock(&blacklist_rwlock);
+    FILE * fp = fopen("blacklist.txt", "r");
+    n = getline(&line, &len, fp);
+    while (n >= 0){
+        parse_blacklisted_host(line, blacklist_host);
+        blacklist_host[strcspn(blacklist_host, "\n")] = 0; //remove trailing newline
+        if (strcmp(blacklist_host, hostname) == 0){
+            pthread_rwlock_unlock(&blacklist_rwlock);
+            return 1;
+        }
+        n = getline(&line, &len, fp);
+    }
+    pthread_rwlock_unlock(&blacklist_rwlock);
+    return 0;
 }
 
