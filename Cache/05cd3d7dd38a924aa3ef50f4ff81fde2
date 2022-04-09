@@ -1,0 +1,11 @@
+HTTP/1.1 200 OK
+Date: Tue, 05 Apr 2022 05:39:19 GMT
+Server: Apache/2.4.6 (Red Hat Enterprise Linux)
+Last-Modified: Tue, 01 Sep 2015 15:49:52 GMT
+ETag: "29-51eb1802c8800"
+Accept-Ranges: bytes
+Content-Length: 41
+Connection: close
+Content-Type: text/plain; charset=UTF-8
+
+This is a text File. Welcome to My Server

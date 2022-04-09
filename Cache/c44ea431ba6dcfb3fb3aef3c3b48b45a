@@ -1,0 +1,16 @@
+HTTP/1.1 200 OK
+Content-Type: image/png
+Content-Length: 124
+Connection: close
+Date: Tue, 05 Apr 2022 04:38:10 GMT
+Last-Modified: Sat, 17 Feb 2018 00:30:16 GMT
+ETag: "8f084423a729c7ac2155a0cfcef9e92d"
+Accept-Ranges: bytes
+Server: AmazonS3
+Cache-Control: public, max-age=86400
+X-Cache: Hit from cloudfront
+Via: 1.1 b7bda6e7794db75fcc11fe5733aa7ccc.cloudfront.net (CloudFront)
+X-Amz-Cf-Pop: DEN50-C1
+X-Amz-Cf-Id: hHb0ex9goDh3KHf7zG8POW9_eRz6ZGk6DZnQR8XaOwl2zf20Y4Sfvw==
+Age: 3378
+
